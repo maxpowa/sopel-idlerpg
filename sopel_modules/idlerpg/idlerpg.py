@@ -92,11 +92,11 @@ class Session:
 
 
     def __eq__(self, other):
-        return self.get_data() == other.get_data()
+        return self.channel == other.channel and self.login == other.login
 
 
     def __hash__(self):
-        return hash(frozenset(self.get_data().items()))
+        return hash((self.channel, self.login))
 
 
 class Player:
@@ -339,17 +339,13 @@ def ch_settings(bot, trigger):
         bot.say('[idlerpg] Paused idlerpg in ' + trigger.sender)
 
 
-@module.rule('.*')
+@module.rule('^>.*')
 @module.event('PRIVMSG')
 @module.require_chanmsg('[idlerpg] You must play idlerpg with other people!')
 @module.priority('low')
 def auth(bot, trigger):
-    if not trigger.args[1].startswith('>'):
-        return
-
     if not bot.db.get_channel_value(trigger.sender, 'idlerpg'):
         return
-
 
     def callback(nick, auth):
         if not auth or auth == '0':
