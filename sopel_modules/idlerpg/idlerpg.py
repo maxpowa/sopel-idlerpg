@@ -70,9 +70,9 @@ def _pretty_delta(delta):
 
 class Session:
     def __init__(self, channel=None, nick=None, login=None):
-        self.channel = channel
-        self.nick = nick
-        self.login = login
+        self.channel = str(channel)
+        self.nick = str(nick)
+        self.login = str(login)
 
 
     def get_data(self):
@@ -278,7 +278,8 @@ def create_player(bot, session):
 
 def get_player(bot, session, login):
     for session in all_sessions:
-        if session.nick == login or session.login == login:
+        if (session.nick.lower() == login.lower() or 
+                session.login.lower() == login.lower()):
             login = session.login
             break
     data = bot.db.get_nick_value(login, 'idlerpg_' + session.channel)
@@ -300,15 +301,53 @@ def save_player(bot, player):
             users)
 
 
+@module.commands('idlerpg', 'irpg')
+@module.require_chanmsg('[idlerpg] You can\'t configure idlerpg in a '
+                        'private message!')
+@module.require_privilege(module.OP, '[idlerpg] You must be an OP to '
+                          'change idlerpg settings!')
+@module.priority('low')
+def ch_settings(bot, trigger):
+    """
+    .irpg <start|resume|pause> - Resume or pause idlerpg in the current channel
+    """
+    if not trigger.group(2):
+        bot.say(ch_settings.__doc__)
+        return
+
+    def success(b, t):
+        if t.args[1].lower() == bot.config.core.nick.lower():
+            return
+        if t.args[2] != '0':
+            session = Session(trigger.sender, t.args[1], t.args[2])
+            player = get_player(bot, session, session.login)
+            if player is None:
+                return
+            all_sessions.add(session)
+            player.session = session
+            player.update(None)
+            save_player(bot, player)
+
+    if (trigger.group(2).strip().lower() == 'resume' or 
+            trigger.group(2).strip().lower() == 'start'):
+        bot.db.set_channel_value(trigger.sender, 'idlerpg', True)
+        perform_who(bot, trigger, nick=trigger.sender,
+            success=success)
+        bot.say('[idlerpg] Resuming idlerpg in ' + trigger.sender)
+    else:
+        bot.db.set_channel_value(trigger.sender, 'idlerpg', False)
+        bot.say('[idlerpg] Paused idlerpg in ' + trigger.sender)
+
+
 @module.rule('.*')
 @module.event('PRIVMSG')
+@module.require_chanmsg('[idlerpg] You must play idlerpg with other people!')
+@module.priority('low')
 def auth(bot, trigger):
     if not trigger.args[1].startswith('>'):
         return
 
-    print(str(all_sessions))
-#TODO Remove the false statement here, it's only for testing
-    if False and not bot.db.get_channel_value(trigger.sender, 'idlerpg'):
+    if not bot.db.get_channel_value(trigger.sender, 'idlerpg'):
         return
 
 
@@ -321,7 +360,7 @@ def auth(bot, trigger):
         all_sessions.add(session)
 
         args = trigger.args[1:]
-        args = args[0][1:].split(' ')
+        args = args[0][1:].strip().split(' ')
         if len(args[0]) == 0 and len(args) == 1:
             args = []
         elif len(args[0]) == 0:
@@ -349,10 +388,10 @@ def auth(bot, trigger):
                 include_xp=True, include_time=True)), destination=trigger.nick)
         elif len(args) == 1 and 'leaderboards'.startswith(args[0].lower()):
             player_list = []
-            for session in all_sessions:
+            for s in all_sessions:
                 if (session.channel != trigger.sender):
                     continue
-                player = get_player(bot, session, session.login)
+                player = get_player(bot, s, s.login)
                 if not player:
                     continue
                 player.update(session)
@@ -375,11 +414,25 @@ def auth(bot, trigger):
         check_auth(bot, trigger, callback)
 
 
+@module.interval(60 * 5)
+def update_all(bot):
+    for session in all_sessions:
+        if not bot.db.get_channel_value(session.channel, 'idlerpg'):
+            continue
+        player = get_player(bot, session, session.login)
+        if player is None:
+            continue
+        # Fake session to updaate players with
+        s = Session(session.channel, bot.config.core.nick, 
+            bot.config.core.nick)
+        player.update(s)
+        save_player(bot, player)
+
+
 @module.rule('.*')
 @module.event('JOIN')
 def join(bot, trigger):
-#TODO: Remove the False statement here, its only for testing
-    if False and not bot.db.get_channel_value(trigger.sender, 'idlerpg'):
+    if not bot.db.get_channel_value(trigger.sender, 'idlerpg'):
         return
 
     def success(b, t):
