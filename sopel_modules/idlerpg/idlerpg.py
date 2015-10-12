@@ -279,10 +279,10 @@ def create_player(bot, session):
 
 
 def get_player(bot, session, login):
-    for session in all_sessions:
-        if (session.nick.lower() == login.lower() or 
-                session.login.lower() == login.lower()):
-            login = session.login
+    for s in all_sessions:
+        if (s.nick.lower() == login.lower() or 
+                s.login.lower() == login.lower()):
+            login = s.login
             break
     data = bot.db.get_nick_value(login, 'idlerpg_' + session.channel)
     if not data:
@@ -352,6 +352,7 @@ def ch_settings(bot, trigger):
 @module.event('PRIVMSG')
 @module.require_chanmsg('[idlerpg] You must play idlerpg with other people!')
 @module.priority('low')
+@module.thread(True)
 def auth(bot, trigger):
     if not bot.db.get_channel_value(trigger.sender, 'idlerpg'):
         return
@@ -393,16 +394,19 @@ def auth(bot, trigger):
                 include_xp=True, include_time=True)), destination=trigger.nick)
         elif len(args) == 1 and 'leaderboards'.startswith(args[0].lower()):
             player_list = []
-            for s in all_sessions:
-                if (session.channel != trigger.sender):
-                    continue
-                player = get_player(bot, s, s.login)
+            name_list = bot.db.get_channel_value(trigger.sender, 'idlerpg_players')
+            if not name_list:
+                name_list = []
+            for login in name_list:
+                session = Session(trigger.sender, login, login)
+                player = get_player(bot, session, session.login)
                 if not player:
                     continue
                 tmp = Session(session.channel, '', '')
                 player.update(tmp)
                 player_list.append(player)
-            player_list.sort(key=lambda x: (x.level, x.xp), reverse=True)
+            player_list.sort(key=lambda x: (x.level, x.xp / 
+                (x.xp_to_next_level() + x.get_penalty_time())), reverse=True)
             #TODO: Config leaderboard print amount
             size = 10 if (len(player_list) >= 10) else len(player_list)
             out = ''
