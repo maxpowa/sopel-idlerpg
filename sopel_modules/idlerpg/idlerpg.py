@@ -4,6 +4,7 @@ from __future__ import unicode_literals, absolute_import, division, print_functi
 
 from sopel import module,loader
 
+import re
 import json
 import math
 import time
@@ -17,6 +18,12 @@ if sys.version_info.major < 3:
 
 current_milli_time = lambda: int(round(time.time() * 1000))
 current_sec_time = lambda: int(round(time.time()))
+
+ratelimit = {}
+all_sessions = set()
+xp_table = {}
+flag = False
+
 
 def _pretty_delta(delta):
     if delta is 0:
@@ -65,9 +72,24 @@ class Session:
         }
 
 
-xp_table = {}
+    def __str__(self):
+        return str(self.get_data())
+
+
+    def __repr__(self):
+        return self.__str__()
+
+
+    def __eq__(self, other):
+        return self.get_data() == other.get_data()
+
+
+    def __hash__(self):
+        return hash(frozenset(self.get_data().items()))
+
+
 class Player:
-    def __init__(self, session=None, level=1, xp=0, last_update=None):
+    def __init__(self, session=None, level=1, xp=0, last_update=None, penalties=0):
         if not session:
             raise ValueError('Session is required to initialize player')
         if type(session) is dict:
@@ -79,6 +101,7 @@ class Player:
         self.level = level
         self.xp = xp
         self.last_update = last_update if last_update else current_sec_time()
+        self.penalties = penalties
 
 
     def get_data(self):
@@ -86,7 +109,8 @@ class Player:
             'session': self.session.get_data(),
             'level': self.level, 
             'xp': self.xp,
-            'last_update': self.last_update
+            'last_update': self.last_update,
+            'penalties': self.penalties
         }
 
 
@@ -101,6 +125,7 @@ class Player:
         if level in xp_table:
             return xp_table[level]
         a = 0
+        #TODO: Tweak the formula for level experience
         for x in range(1, level):
             a += int(x + 300.0 * math.pow(2, x / 7))
         value = math.ceil(a / 4.0)
@@ -112,6 +137,11 @@ class Player:
         return self.get_xp_for(self.level + 1)
 
 
+    def get_penalty_time(self):
+        #TODO: Tweak the penalty time formula
+        return int(self.penalties * (math.pow(1.14, self.level)))
+
+
     def get_progress_bar(self, value, length):
         percent = 1.0 / length
         bar = '['
@@ -121,44 +151,58 @@ class Player:
 
 
     def update(self, session):
+        if (session is None):
+            self.last_update = current_sec_time()
+            return
+
         time = current_sec_time()
         diff = time - self.last_update
         self.last_update = time
 
-        xp_for_next = self.xp_to_next_level()
+        xp_for_next = self.xp_to_next_level() + self.get_penalty_time()
         self.xp += diff
-        if (session is not None and session.login == self.session.login and
-                self.xp >= xp_for_next):
+        if (session.login == self.session.login and self.xp >= xp_for_next):
+            self.session = session
             self.xp = 0
             self.level += 1
+            self.penalties = 0
 
         if self.xp > xp_for_next:
             self.xp = xp_for_next
 
 
-    def get_status(self, bot, session, include_xp=False, include_time=False):
-        response = session.nick
+    def get_status(self, bot, session, include_xp=False, include_time=False,
+            leaderboard=False):
+        response = session.nick 
+        if session.login != self.session.login:
+            response = self.session.nick
         if (session.login == self.session.login and
                 session.nick != session.login):
             response += ' / ' + self.session.login
         response += ', level ' + str(self.level)
 
-        target_xp = self.xp_to_next_level()
+        target_xp = self.xp_to_next_level() + self.get_penalty_time()
         if include_xp:
-            if self.level is not 1 and self.xp is 0:
+            if (self.level is not 1 and self.xp is 0 and 
+                    session.login == self.session.login and not leaderboard):
                 response += ', LEVEL UP!'
 
                 if (self.level % 5) is 0:
-                    congrats = '>>> CONGRATULATIONS!'
+                    congrats = '>>> CONGRATULATIONS! ' + session.nick
                     if (session.login is self.session.login and
                             session.nick is not session.login):
-                        congrats += ' / ' + session.nick
+                        congrats += ' / ' + self.session.login
                     congrats += ' achieved level ' + str(self.level) + '! <<<'
                     bot.say(congrats)
-            elif self.xp == target_xp:
+            elif self.xp == target_xp or (leaderboard and self.xp == 0):
                 response += ', level up available'
             else:
-                response += ', XP: {:,} / {:,}'.format(self.xp, target_xp)
+                if (target_xp == self.xp_to_next_level()):
+                    response += ', XP: {:,} / {:,}'.format(self.xp, target_xp)
+                else:
+                    response += ', XP: {:,} / {:,} ({:,} + {:,})'.format(
+                        self.xp, target_xp, self.xp_to_next_level(), 
+                        self.get_penalty_time())
 
             if self.xp > 0 and self.xp < target_xp:
                 response += ' '
@@ -172,19 +216,13 @@ class Player:
         return response
 
 
-def configure(config):
-    pass
+    def penalize(self, penalty):
+        self.penalties += penalty
 
 
-def setup(bot):
-    pass
-
-
-flag = False
-
-def perform_who(bot, trigger, nick=None, success=None, fail=None):
+def perform_who(bot, trigger, nick=None, success=None, fail=None, end=None):
     @module.rule('.*')
-    @module.priority('low')
+    @module.priority('high')
     @module.event('354')
     def who_recv(b, t):
         global flag
@@ -200,6 +238,8 @@ def perform_who(bot, trigger, nick=None, success=None, fail=None):
         global flag
         if fail and not flag:
             fail(b, t)
+        if end:
+            end(b, t)
         flag = False
         bot.unregister(who_recv)
         bot.unregister(who_end)
@@ -254,16 +294,25 @@ def save_player(bot, player):
 @module.rule('.*')
 @module.event('PRIVMSG')
 def auth(bot, trigger):
+    global ratelimit
     if not trigger.args[1].startswith('>'):
         return
 
+    if trigger.nick in ratelimit:
+        since = ratelimit[trigger.nick]
+        if current_sec_time() - since < 5:
+            return
+    ratelimit[trigger.nick] = current_sec_time()
+
+#TODO Remove the false statement here, it's only for testing
     if False and not bot.db.get_channel_value(trigger.sender, 'idlerpg'):
         return
 
 
     def callback(nick, auth):
-        if not auth:
-            return bot.say('[idlerpg] You must be authenticated with NickServ')
+        if not auth or auth == '0':
+            return bot.notice('[idlerpg] You must be authenticated with '
+                'NickServ', destination=trigger.nick)
 
         session = Session(trigger.sender, trigger.nick, auth)
 
@@ -283,6 +332,7 @@ def auth(bot, trigger):
                     return bot.notice('[idlerpg] Player \'{}\' does not exist.'
                         .format(args[1]), destination=trigger.nick)
                 create_player(bot, session)
+                del ratelimit[trigger.nick]
                 return bot.notice('[idlerpg] Welcome to IdleRPG, {}! You are '
                     'logged in as {}.'.format(session.nick, session.login),
                     destination=trigger.nick)
@@ -292,26 +342,153 @@ def auth(bot, trigger):
             bot.notice('[idlerpg] {}'.format(check.get_status(bot, session, 
                 include_xp=True, include_time=True)), destination=trigger.nick)
         elif len(args) == 1 and 'leaderboards'.startswith(args[0].lower()):
-            name_list = bot.db.get_channel_value(session.channel, 
-                'idlerpg_players')
-            if not name_list:
-                name_list = []
             player_list = []
-            for name in name_list:
-                player = get_player(bot, session, name)
-                player.update(player.session)
-                save_player(bot, player)
+            for session in all_sessions:
+                if (session.channel != trigger.sender):
+                    continue
+                player = get_player(bot, session, session.login)
+                if not player:
+                    continue
+                player.update(session)
                 player_list.append(player)
-            player_list.sort(key=lambda x: (x.level, x.xp), reverse=False)
+            player_list.sort(key=lambda x: (x.level, x.xp), reverse=True)
             #TODO: Config leaderboard print amount
             size = 10 if (len(player_list) >= 10) else len(player_list)
             out = ''
             for i in range(0, size):
                 player = player_list[i]
                 out = '{}. {}'.format(str(i + 1), player.get_status(bot, 
-                    session, include_xp=True))
+                    session, include_xp=True, leaderboard=True))
                 bot.notice(out, destination=trigger.nick)
             
     check_auth(bot, trigger, callback)
 
 
+@module.rule('.*')
+@module.event('JOIN')
+def join(bot, trigger):
+#TODO: Remove the False statement here, its only for testing
+    if False and not bot.db.get_channel_value(trigger.sender, 'idlerpg'):
+        return
+
+    def success(b, t):
+        if t.args[1].lower() == bot.config.core.nick.lower():
+            return
+        if t.args[2] != '0':
+            session = Session(trigger.sender, t.args[1], t.args[2])
+            player = get_player(bot, session, session.login)
+            if player is None:
+                return
+            all_sessions.add(session)
+            player.session = session
+            player.update(None)
+            save_player(bot, player)
+
+
+    if trigger.nick.lower() == bot.config.core.nick.lower():
+        #We are joining a channel, enumerate users.
+        perform_who(bot, trigger, nick=trigger.sender, 
+            success=success)
+        return
+
+
+    def callback(nick, auth):
+        if not auth:
+            return
+        session = Session(trigger.sender, trigger.nick, auth)
+        player = get_player(bot, session, session.login)
+        if player is None:
+            return
+        all_sessions.add(session)
+        player.session = session
+        player.update(None)
+        save_player(bot, player)
+
+    check_auth(bot, trigger, callback)
+
+
+netsplit_regex = re.compile('^:\S+\.\S+ \S+\.\S+$')
+
+@module.rule('.*')
+@module.event('QUIT')
+@module.priority('high')
+def quit(bot, trigger):
+    global all_sessions
+    netsplit = netsplit_regex.match(trigger.match.string)
+    new_sessions = set()
+    for session in all_sessions:
+        if session.nick == trigger.nick:
+            session = Session(session.channel, trigger.nick, session.login)
+            player = get_player(bot, session, session.login)
+            if player is None:
+                continue
+            player.session = session
+            if netsplit:
+                player.update(None)
+            else:
+                player.penalize(20)
+                player.update(session)
+            save_player(bot, player)
+        else:
+            new_sessions.add(session)
+    all_sessions = new_sessions
+
+
+@module.rule('.*')
+@module.event('NICK')
+@module.priority('high')
+def nick(bot, trigger):
+    global all_sessions
+    new_sessions = set()
+    for session in all_sessions:
+        if session.nick == trigger.nick:
+            session.nick = trigger.sender
+        new_sessions.add(session)
+        player = get_player(bot, session, session.login)
+        if player is None:
+            continue
+        player.session = session
+        player.penalize(30)
+        player.update(session)
+        save_player(bot, player)
+    all_sessions = new_sessions
+
+
+@module.rule('.*')
+@module.event('PART')
+@module.priority('high')
+def part(bot, trigger):
+    global all_sessions
+    new_sessions = set()
+    for session in all_sessions:
+        if session.channel != trigger.sender and trigger.nick != session.nick:
+            new_sessions.add(session)
+            continue
+        player = get_player(bot, session, session.login)
+        if player is None:
+            continue
+        player.session = session
+        player.penalize(200)
+        player.update(session)
+        save_player(bot, player)
+    all_sessions = new_sessions
+
+
+@module.rule('.*')
+@module.event('KICK')
+@module.priority('high')
+def kick(bot, trigger):
+    global all_sessions
+    new_sessions = set()
+    for session in all_sessions:
+        if session.channel != trigger.sender and session.nick != trigger.args[1]:
+            new_sessions.add(session)
+            continue
+        player = get_player(bot, session, session.login)
+        if player is None:
+            continue
+        player.session = session
+        player.penalize(250)
+        player.update(session)
+        save_player(bot, player)
+    all_sessions = new_sessions
