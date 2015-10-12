@@ -101,7 +101,8 @@ class Session:
 
 
 class Player:
-    def __init__(self, session=None, level=1, xp=0, last_update=None, penalties=0):
+    def __init__(self, session=None, level=1, xp=0, last_update=None, 
+                 penalties=0):
         if not session:
             raise ValueError('Session is required to initialize player')
         if type(session) is dict:
@@ -195,8 +196,8 @@ class Player:
 
                 if (self.level % 5) is 0:
                     congrats = '>>> CONGRATULATIONS! ' + session.nick
-                    if (session.login is self.session.login and
-                            session.nick is not session.login):
+                    if (session.login == self.session.login and
+                            session.nick != session.login):
                         congrats += ' / ' + self.session.login
                     congrats += ' achieved level ' + str(self.level) + '! <<<'
                     bot.say(congrats)
@@ -337,6 +338,11 @@ def ch_settings(bot, trigger):
         bot.say('[idlerpg] Resuming idlerpg in ' + trigger.sender)
     else:
         bot.db.set_channel_value(trigger.sender, 'idlerpg', False)
+        new_sessions = set()
+        for session in all_sessions:
+            if session.channel == trigger.sender:
+                continue
+            new_sessions.add(session)
         bot.say('[idlerpg] Paused idlerpg in ' + trigger.sender)
 
 
@@ -391,7 +397,8 @@ def auth(bot, trigger):
                 player = get_player(bot, s, s.login)
                 if not player:
                     continue
-                player.update(session)
+                tmp = Session(session.channel, '', '')
+                player.update(tmp)
                 player_list.append(player)
             player_list.sort(key=lambda x: (x.level, x.xp), reverse=True)
             #TODO: Config leaderboard print amount
@@ -411,7 +418,7 @@ def auth(bot, trigger):
         check_auth(bot, trigger, callback)
 
 
-@module.interval(60 * 5)
+@module.interval(60)
 def update_all(bot):
     for session in all_sessions:
         if not bot.db.get_channel_value(session.channel, 'idlerpg'):
@@ -420,9 +427,22 @@ def update_all(bot):
         if player is None:
             continue
         # Fake session to updaate players with
-        s = Session(session.channel, bot.config.core.nick, 
-            bot.config.core.nick)
+        s = Session(session.channel, '', '')
         player.update(s)
+        save_player(bot, player)
+
+
+@module.rule('^[^.>].*')
+def privmsg(bot, trigger):
+    for session in all_sessions:
+        if session.channel != trigger.sender or trigger.nick != session.nick:
+            continue
+        player = get_player(bot, session, session.login)
+        if player is None:
+            continue
+        player.session = session
+        player.penalize(len(trigger.match.string))
+        player.update(session)
         save_player(bot, player)
 
 
@@ -520,7 +540,7 @@ def part(bot, trigger):
     global all_sessions
     new_sessions = set()
     for session in all_sessions:
-        if session.channel != trigger.sender and trigger.nick != session.nick:
+        if session.channel != trigger.sender or trigger.nick != session.nick:
             new_sessions.add(session)
             continue
         player = get_player(bot, session, session.login)
@@ -540,7 +560,7 @@ def kick(bot, trigger):
     global all_sessions
     new_sessions = set()
     for session in all_sessions:
-        if session.channel != trigger.sender and session.nick != trigger.args[1]:
+        if session.channel != trigger.sender or session.nick != trigger.args[1]:
             new_sessions.add(session)
             continue
         player = get_player(bot, session, session.login)
