@@ -32,6 +32,7 @@ PENALTY_FORMULA = lambda x, y: math.ceil(x * (math.pow(1.14, y)))
 current_milli_time = lambda: int(round(time.time() * 1000))
 current_sec_time = lambda: int(round(time.time()))
 
+netsplit_regex = re.compile('^:\S+\.\S+ \S+\.\S+$')
 all_sessions = set()
 flag = False
 
@@ -466,8 +467,6 @@ def join(bot, trigger):
 
     check_auth(bot, trigger, callback)
 
-
-netsplit_regex = re.compile('^:\S+\.\S+ \S+\.\S+$')
 
 @module.rule('.*')
 @module.event('QUIT')
