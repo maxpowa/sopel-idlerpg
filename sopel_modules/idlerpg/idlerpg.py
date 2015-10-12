@@ -15,13 +15,24 @@ if sys.version_info.major < 3:
     int = long
     range = xrange
 
+""" Formula for the amount of time (in seconds) it takes to reach
+    the given level """
+LEVEL_FORMULA = lambda x: math.ceil(600 * math.pow(1.16, x))
+
+""" Maximum level to use the standard level formula for """
+HIGH_LEVEL = 60
+
+""" Formula to use once users have surpassed the regular level formula """
+HIGH_LEVEL_FORMULA = (lambda x: 
+    math.ceil(LEVEL_FORMULA(HIGH_LEVEL) + (86400 * (x - HIGH_LEVEL))))
+
+""" Formula to use when calculating additional time for penalties """
+PENALTY_FORMULA = lambda x, y: math.ceil(x * (math.pow(1.14, y)))
 
 current_milli_time = lambda: int(round(time.time() * 1000))
 current_sec_time = lambda: int(round(time.time()))
 
-ratelimit = {}
 all_sessions = set()
-xp_table = {}
 flag = False
 
 
@@ -115,21 +126,16 @@ class Player:
 
 
     def get_xp_for(self, level):
-        global xp_table
         try:
             level = int(level)
         except ValueError:
             raise ValueError('get_xp_for(%s) failed'.format(str(level)))
         if level <= 1:
             return 0
-        if level in xp_table:
-            return xp_table[level]
-        a = 0
-        #TODO: Tweak the formula for level experience
-        for x in range(1, level):
-            a += int(x + 300.0 * math.pow(2, x / 7))
-        value = math.ceil(a / 4.0)
-        xp_table[level] = value
+        if level < HIGH_LEVEL:
+            value = LEVEL_FORMULA(level)
+        else:
+            value = HIGH_LEVEL_FORMULA(level)
         return value
 
 
@@ -138,8 +144,7 @@ class Player:
 
 
     def get_penalty_time(self):
-        #TODO: Tweak the penalty time formula
-        return int(self.penalties * (math.pow(1.14, self.level)))
+        return PENALTY_FORMULA(self.penalties, self.level) 
 
 
     def get_progress_bar(self, value, length):
@@ -207,7 +212,7 @@ class Player:
             if self.xp > 0 and self.xp < target_xp:
                 response += ' '
                 response += self.get_progress_bar(self.xp / target_xp, 20)
-                response += ' ({:.1%}%)'.format(self.xp / target_xp)
+                response += ' ({:.1%})'.format(self.xp / target_xp)
 
         if include_time and self.xp is not target_xp:
             response += ' | {} until level up'.format(
@@ -271,8 +276,12 @@ def create_player(bot, session):
     bot.db.set_nick_value(session.login, 'idlerpg_' + session.channel, data)
 
 
-def get_player(bot, session, nick):
-    data = bot.db.get_nick_value(nick, 'idlerpg_' + session.channel)
+def get_player(bot, session, login):
+    for session in all_sessions:
+        if session.nick == login or session.login == login:
+            login = session.login
+            break
+    data = bot.db.get_nick_value(login, 'idlerpg_' + session.channel)
     if not data:
         return None
     return Player(**data)
@@ -294,15 +303,8 @@ def save_player(bot, player):
 @module.rule('.*')
 @module.event('PRIVMSG')
 def auth(bot, trigger):
-    global ratelimit
     if not trigger.args[1].startswith('>'):
         return
-
-    if trigger.nick in ratelimit:
-        since = ratelimit[trigger.nick]
-        if current_sec_time() - since < 5:
-            return
-    ratelimit[trigger.nick] = current_sec_time()
 
 #TODO Remove the false statement here, it's only for testing
     if False and not bot.db.get_channel_value(trigger.sender, 'idlerpg'):
@@ -332,7 +334,7 @@ def auth(bot, trigger):
                     return bot.notice('[idlerpg] Player \'{}\' does not exist.'
                         .format(args[1]), destination=trigger.nick)
                 create_player(bot, session)
-                del ratelimit[trigger.nick]
+                all_sessions.add(session)
                 return bot.notice('[idlerpg] Welcome to IdleRPG, {}! You are '
                     'logged in as {}.'.format(session.nick, session.login),
                     destination=trigger.nick)
@@ -360,8 +362,13 @@ def auth(bot, trigger):
                 out = '{}. {}'.format(str(i + 1), player.get_status(bot, 
                     session, include_xp=True, leaderboard=True))
                 bot.notice(out, destination=trigger.nick)
-            
-    check_auth(bot, trigger, callback)
+
+    for session in all_sessions:
+        if (trigger.nick == session.nick):
+            callback(session.nick, session.login)
+            break
+    else:
+        check_auth(bot, trigger, callback)
 
 
 @module.rule('.*')
