@@ -306,6 +306,7 @@ def auth(bot, trigger):
     if not trigger.args[1].startswith('>'):
         return
 
+    print(str(all_sessions))
 #TODO Remove the false statement here, it's only for testing
     if False and not bot.db.get_channel_value(trigger.sender, 'idlerpg'):
         return
@@ -317,13 +318,16 @@ def auth(bot, trigger):
                 'NickServ', destination=trigger.nick)
 
         session = Session(trigger.sender, trigger.nick, auth)
+        all_sessions.add(session)
 
         args = trigger.args[1:]
         args = args[0][1:].split(' ')
-        if len(args[0]) == 0:
+        if len(args[0]) == 0 and len(args) == 1:
             args = []
-        if len(args) == 0 or (len(args) <= 2 
-            and 'status'.startswith(args[0].lower())):
+        elif len(args[0]) == 0:
+            return # This must be an unrelated > prefixed message
+        if len(args) == 0 or (len(args) <= 2 and 
+                'status'.startswith(args[0].lower())):
 
             check = get_player(bot, session, session.login)
             if (len(args) == 2):
