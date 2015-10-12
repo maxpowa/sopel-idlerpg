@@ -313,6 +313,7 @@ def ch_settings(bot, trigger):
     """
     .irpg <start|resume|pause> - Resume or pause idlerpg in the current channel
     """
+    global all_sessions
     if not trigger.group(2):
         bot.say(ch_settings.__doc__)
         return
@@ -343,6 +344,7 @@ def ch_settings(bot, trigger):
             if session.channel == trigger.sender:
                 continue
             new_sessions.add(session)
+        all_sessions = new_sessions
         bot.say('[idlerpg] Paused idlerpg in ' + trigger.sender)
 
 
