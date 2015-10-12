@@ -449,6 +449,21 @@ def privmsg(bot, trigger):
 
 
 @module.rule('.*')
+@module.event('NOTICE')
+def notice(bot, trigger):
+    for session in all_sessions:
+        if session.channel != trigger.sender or trigger.nick != session.nick:
+            continue
+        player = get_player(bot, session, session.login)
+        if player is None:
+            continue
+        player.session = session
+        player.penalize(len(trigger.match.string))
+        player.update(session)
+        save_player(bot, player)
+
+
+@module.rule('.*')
 @module.event('JOIN')
 def join(bot, trigger):
     if not bot.db.get_channel_value(trigger.sender, 'idlerpg'):
