@@ -3,6 +3,7 @@
 from __future__ import unicode_literals, absolute_import, division, print_function
 
 from sopel import module,loader
+import idlerpg
 
 import re
 import json
@@ -337,6 +338,9 @@ def ch_settings(bot, trigger):
         perform_who(bot, trigger, nick=trigger.sender,
             success=success)
         bot.say('[idlerpg] Resuming idlerpg in ' + trigger.sender)
+    elif ('version'.startswith(trigger.group(2).strip().lower())):
+        bot.say('[idlerpg] Version {} by {}, report issues at {}'.format(
+            idlerpg.__version__, idlerpg.__author__, idlerpg.__repo__)) 
     else:
         bot.db.set_channel_value(trigger.sender, 'idlerpg', False)
         new_sessions = set()
