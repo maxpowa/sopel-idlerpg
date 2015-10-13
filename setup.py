@@ -28,7 +28,7 @@ with open('dev-requirements.txt') as dev_requirements_file:
 setup(
     name='sopel_modules.idlerpg',
     version='0.1.0',
-    description='Rewrite of the idlerpg bot in python, using Sopel',
+    description='A rewrite of the original IdleRPG to work as a module for Sopel. It incorporates some of the features of Shocky\'s IdleRPG system, though is much more in-depth.',
     long_description=readme + '\n\n' + history,
     author='Max Gurela',
     author_email='maxpowa@outlook.com',
