@@ -3,6 +3,7 @@
 from __future__ import unicode_literals, absolute_import, division, print_function
 
 from sopel import module, loader
+from sopel.logger import get_logger
 import sys
 import math
 import time
@@ -12,6 +13,7 @@ if sys.version_info.major < 3:
     int = long
     range = xrange
 
+LOGGER = get_logger(__name__)
 
 """ Formula for the amount of time (in seconds) it takes to reach
     the given level """
@@ -21,7 +23,7 @@ LEVEL_FORMULA = lambda x: math.ceil(600 * math.pow(1.16, x))
 HIGH_LEVEL = 60
 
 """ Formula to use once users have surpassed the regular level formula """
-HIGH_LEVEL_FORMULA = (lambda x: 
+HIGH_LEVEL_FORMULA = (lambda x:
     math.ceil(LEVEL_FORMULA(HIGH_LEVEL) + (86400 * (x - HIGH_LEVEL))))
 
 """ Formula to use when calculating additional time for penalties """
@@ -29,13 +31,13 @@ PENALTY_FORMULA = lambda x, y: math.ceil(x * (math.pow(1.14, y)))
 
 current_sec_time = lambda: int(round(time.time()))
 
+
 #TODO: Document these classes, test them
-class Session:
+class Session(object):
     def __init__(self, channel=None, nick=None, login=None):
         self.channel = str(channel)
         self.nick = str(nick)
         self.login = str(login)
-
 
     def get_data(self):
         return {
@@ -44,25 +46,21 @@ class Session:
             'login': self.login
         }
 
-
     def __str__(self):
         return str(self.get_data())
-
 
     def __repr__(self):
         return self.__str__()
 
-
     def __eq__(self, other):
         return self.channel == other.channel and self.login == other.login
-
 
     def __hash__(self):
         return hash((self.channel, self.login))
 
 
-class Player:
-    def __init__(self, session=None, level=1, xp=0, last_update=None, 
+class Player(object):
+    def __init__(self, session=None, level=1, xp=0, last_update=None,
                  penalties=0):
         if not session:
             raise ValueError('Session is required to initialize player')
@@ -71,22 +69,22 @@ class Player:
         elif type(session) is Session:
             self.session = session
         else:
+            LOGGER.info(repr(session))
+            LOGGER.info(repr(type(session)))
             raise ValueError('Session was an invalid object')
         self.level = level
         self.xp = xp
         self.last_update = last_update if last_update else current_sec_time()
         self.penalties = penalties
 
-
     def get_data(self):
         return {
             'session': self.session.get_data(),
-            'level': self.level, 
+            'level': self.level,
             'xp': self.xp,
             'last_update': self.last_update,
             'penalties': self.penalties
         }
-
 
     def get_xp_for(self, level):
         try:
@@ -101,14 +99,11 @@ class Player:
             value = HIGH_LEVEL_FORMULA(level)
         return value
 
-
     def xp_to_next_level(self):
         return self.get_xp_for(self.level + 1)
 
-
     def get_penalty_time(self):
-        return PENALTY_FORMULA(self.penalties, self.level) 
-
+        return PENALTY_FORMULA(self.penalties, self.level)
 
     def get_progress_bar(self, value, length):
         percent = 1.0 / length
@@ -116,7 +111,6 @@ class Player:
         for i in range(1, length - 2):
             bar += ('=' if (value >= i * percent) else ' ')
         return bar + ']'
-
 
     def update(self, session):
         if (session is None):
@@ -138,10 +132,9 @@ class Player:
         if self.xp > xp_for_next:
             self.xp = xp_for_next
 
-
     def get_status(self, bot, session, include_xp=False, include_time=False,
             leaderboard=False):
-        response = session.nick 
+        response = session.nick
         if session.login != self.session.login:
             response = self.session.nick
         if (session.login == self.session.login and
@@ -151,7 +144,7 @@ class Player:
 
         target_xp = self.xp_to_next_level() + self.get_penalty_time()
         if include_xp:
-            if (self.level is not 1 and self.xp is 0 and 
+            if (self.level is not 1 and self.xp is 0 and
                     session.login == self.session.login and not leaderboard):
                 response += ', LEVEL UP!'
 
@@ -169,7 +162,7 @@ class Player:
                     response += ', XP: {:,} / {:,}'.format(self.xp, target_xp)
                 else:
                     response += ', XP: {:,} / {:,} ({:,} + {:,})'.format(
-                        self.xp, target_xp, self.xp_to_next_level(), 
+                        self.xp, target_xp, self.xp_to_next_level(),
                         self.get_penalty_time())
 
             if self.xp > 0 and self.xp < target_xp:
@@ -182,7 +175,6 @@ class Player:
                 pretty_delta(target_xp - self.xp))
 
         return response
-
 
     def penalize(self, penalty):
         self.penalties += penalty
@@ -218,50 +210,3 @@ def pretty_delta(delta):
     if s > 0:
         ret += str(s) + 's'
     return ret
-
-
-def perform_who(bot, trigger, nick=None, success=None, fail=None, end=None):
-    @module.rule('.*')
-    @module.priority('high')
-    @module.event('354')
-    def who_recv(b, t):
-        global flag
-        flag = True
-        if success:
-            success(b, t)
-
-
-    @module.rule('.*')
-    @module.priority('low')
-    @module.event('315')
-    def who_end(b, t):
-        global flag
-        if fail and not flag:
-            fail(b, t)
-        if end:
-            end(b, t)
-        flag = False
-        bot.unregister(who_recv)
-        bot.unregister(who_end)
-
-
-    if not nick:
-        nick = trigger.nick
-    loader.clean_callable(who_recv, bot.config)
-    loader.clean_callable(who_end, bot.config)
-    meta = ([who_recv, who_end],[],[])
-    bot.register(*meta)
-    bot.write(['WHO', nick, '%na'])
-
-
-def check_auth(bot, trigger, cb):
-    def success(b, t):
-        cb(t.args[1], t.args[2])
-
-
-    def fail(b, t):
-        cb(t.args[1], None)
-
-
-    perform_who(bot, trigger, success=success, fail=fail)
-
